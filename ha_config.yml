@@ -1,0 +1,462 @@
+input_select:
+  hazvezerlo_uzemmod:
+    name: Automatikus uzemmod
+    icon: mdi:state-machine
+    options:            # first option is the default on the very first start
+      - semleges
+      - futes
+      - hutes
+
+input_boolean:
+  tavolleti_uzem:
+    name: Tavolleti uzem (fagyvedelem)
+    icon: mdi:home-export-outline
+
+input_datetime:
+  hazvezerlo_utolso_valtas:
+    name: Utolso uzemmod-valtas ideje
+    has_date: true
+    has_time: true
+
+input_number:
+  # --- comfort bands (heating: turn on below min, off at max; cooling: on above max, off at min)
+  futes_min:
+    name: Futes - also hatar
+    min: 15
+    max: 28
+    step: 0.5
+    unit_of_measurement: "°C"
+    mode: box
+  futes_max:
+    name: Futes - felso hatar
+    min: 15
+    max: 28
+    step: 0.5
+    unit_of_measurement: "°C"
+    mode: box
+  hutes_min:
+    name: Hutes - also hatar
+    min: 18
+    max: 32
+    step: 0.5
+    unit_of_measurement: "°C"
+    mode: box
+  hutes_max:
+    name: Hutes - felso hatar
+    min: 18
+    max: 32
+    step: 0.5
+    unit_of_measurement: "°C"
+    mode: box
+  # --- vacancy / frost protection
+  tavolleti_homerseklet:
+    name: Tavolleti tartotemperatura
+    min: 8
+    max: 20
+    step: 0.5
+    unit_of_measurement: "°C"
+    mode: box
+  tavolleti_hiszterezis:
+    name: Tavolleti hiszterezis
+    min: 0.5
+    max: 3
+    step: 0.5
+    unit_of_measurement: "°C"
+    mode: box
+  # --- mode selection
+  modvaltas_belepesi_kuszob:
+    name: Modvaltas - belepesi kuszob (24 h atlagkulonbseg)
+    min: 1
+    max: 10
+    step: 0.5
+    unit_of_measurement: "°C"
+    mode: box
+  modvaltas_kilepesi_kuszob:
+    name: Modvaltas - kilepesi kuszob (24 h atlagkulonbseg)
+    min: 0
+    max: 8
+    step: 0.5
+    unit_of_measurement: "°C"
+    mode: box
+  modvaltas_min_tartozkodas:
+    name: Modvaltas - minimalis tartozkodasi ido
+    min: 0
+    max: 72
+    step: 1
+    unit_of_measurement: "h"
+    mode: box
+  # --- resident offsets
+  lakoi_eltolas_max:
+    name: Lakoi eltoles - maximum
+    min: 0
+    max: 5
+    step: 0.5
+    unit_of_measurement: "°C"
+    mode: box
+  # Per-room resident offset (one helper per room, entity id = szoba_eltolas_<room id>).
+  # Copy this block for every room in the room table below.
+  szoba_eltolas_dolgozo:
+    name: Szoba eltoles - Dolgozo
+    min: -3
+    max: 3
+    step: 0.5
+    unit_of_measurement: "°C"
+    mode: slider
+  szoba_eltolas_nappali:
+    name: Szoba eltoles - Nappali
+    min: -3
+    max: 3
+    step: 0.5
+    unit_of_measurement: "°C"
+    mode: slider
+  szoba_eltolas_kis_gyerekszoba:
+    name: Szoba eltoles - Kis gyerekszoba
+    min: -3
+    max: 3
+    step: 0.5
+    unit_of_measurement: "°C"
+    mode: slider
+
+# -----------------------------------------------------------------------------
+# 2. Sensors (reference means, 24 h averages, lowest room temperature)
+# -----------------------------------------------------------------------------
+sensor:
+  - platform: min_max
+    name: "Belso referencia atlag"
+    unique_id: belso_referencia_atlag
+    type: mean
+    round_digits: 2
+    entity_ids:
+      - sensor.sonoff_snzb_02dr2_homerseklet
+
+  - platform: min_max
+    name: "Legalacsonyabb szoba homerseklet"
+    unique_id: legalacsonyabb_szoba_homerseklet
+    type: min
+    round_digits: 1
+    entity_ids:
+      - sensor.sonoff_snzb_02dr2_homerseklet
+
+  - platform: statistics
+    name: "Belso referencia atlag 24h"
+    unique_id: belso_referencia_atlag_24h
+    entity_id: sensor.belso_referencia_atlag
+    state_characteristic: average_linear
+    max_age:
+      hours: 24
+    sampling_size: 5000
+
+  - platform: statistics
+    name: "Kulso homerseklet atlag 24h"
+    unique_id: kulso_homerseklet_atlag_24h
+    entity_id: sensor.sonoff_snzb_02wd_homerseklet   # TODO: check the real outdoor sensor entity id
+    state_characteristic: average_linear
+    max_age:
+      hours: 24
+    sampling_size: 5000
+
+template:
+  - sensor:
+      - name: "Belso kulso kulonbseg 24h"
+        unique_id: belso_kulso_kulonbseg_24h
+        unit_of_measurement: "°C"
+        device_class: temperature
+        state_class: measurement
+        availability: >-
+          {{ has_value('sensor.belso_referencia_atlag_24h')
+             and has_value('sensor.kulso_homerseklet_atlag_24h') }}
+        # positive value = outdoor is colder than indoor (heating side)
+        state: >-
+          {{ (states('sensor.belso_referencia_atlag_24h') | float
+              - states('sensor.kulso_homerseklet_atlag_24h') | float) | round(1) }}
+
+# -----------------------------------------------------------------------------
+# 3. Scripts
+# -----------------------------------------------------------------------------
+script:
+  szabalyozas_alapertekek:
+    alias: "Szabalyozas - alapertekek beallitasa"
+    mode: single
+    sequence:
+      - action: input_number.set_value
+        target: {entity_id: input_number.futes_min}
+        data: {value: 21}
+      - action: input_number.set_value
+        target: {entity_id: input_number.futes_max}
+        data: {value: 23}
+      - action: input_number.set_value
+        target: {entity_id: input_number.hutes_min}
+        data: {value: 24}
+      - action: input_number.set_value
+        target: {entity_id: input_number.hutes_max}
+        data: {value: 26}
+      - action: input_number.set_value
+        target: {entity_id: input_number.tavolleti_homerseklet}
+        data: {value: 16}
+      - action: input_number.set_value
+        target: {entity_id: input_number.tavolleti_hiszterezis}
+        data: {value: 1}
+      - action: input_number.set_value
+        target: {entity_id: input_number.modvaltas_belepesi_kuszob}
+        data: {value: 4}
+      - action: input_number.set_value
+        target: {entity_id: input_number.modvaltas_kilepesi_kuszob}
+        data: {value: 2}
+      - action: input_number.set_value
+        target: {entity_id: input_number.modvaltas_min_tartozkodas}
+        data: {value: 24}
+      - action: input_number.set_value
+        target: {entity_id: input_number.lakoi_eltolas_max}
+        data: {value: 3}
+
+  hocserelo_uzemmod_beallitas:
+    alias: "Hocserelo - uzemmod beallitasa"
+    mode: queued
+    fields:
+      mode:
+        description: "semleges | futes | hutes"
+      demand:
+        description: "true if a floor/ceiling circuit is open"
+    sequence:
+      # TODO: replace with the real exchanger control (ESP module / select entity).
+      # Keep it idempotent: it is called every 5 minutes with the same values.
+      - action: logbook.log
+        data:
+          name: Hocserelo
+          message: "requested mode={{ mode }}, demand={{ demand }}"
+
+  szabalyozas_futokorok:
+    alias: "Szabalyozas - futokorok alkalmazasa"
+    mode: queued
+    max: 3
+    sequence:
+      - variables:
+          rooms:
+            - id: dolgozo
+              temp: sensor.sonoff_snzb_02dr2_homerseklet
+              circuits:
+                - {entity: switch.dolgozo_oldalfal, type: wall}               # TODO:
+            - id: nappali
+              temp: sensor.nappali_homerseklet                                 # TODO:
+              circuits:
+                - {entity: switch.nappali_padlo, type: floor}                  # TODO
+                - {entity: switch.nappali_oldalfal, type: wall}                # TODO
+            - id: kis_gyerekszoba
+              temp: sensor.kis_gyerekszoba_homerseklet                         # TODO
+              circuits:
+                - {entity: switch.kis_gyerekszoba_padlo, type: floor}          # TODO
+      - variables:
+          mode: "{{ states('input_select.hazvezerlo_uzemmod') }}"
+          away: "{{ is_state('input_boolean.tavolleti_uzem', 'on') }}"
+          h_min: "{{ states('input_number.futes_min') | float(0) }}"
+          h_max: "{{ states('input_number.futes_max') | float(0) }}"
+          c_min: "{{ states('input_number.hutes_min') | float(0) }}"
+          c_max: "{{ states('input_number.hutes_max') | float(0) }}"
+          away_t: "{{ states('input_number.tavolleti_homerseklet') | float(16) }}"
+          away_h: "{{ states('input_number.tavolleti_hiszterezis') | float(1) }}"
+          off_max: "{{ states('input_number.lakoi_eltolas_max') | float(0) }}"
+      - if:
+          - condition: template
+            value_template: "{{ not away and not (h_min < h_max < c_min < c_max) }}"
+        then:
+          - action: persistent_notification.create
+            data:
+              notification_id: szabalyozas_parameter_hiba
+              title: "Szabalyozas: ervenytelen parameterek"
+              message: >-
+                Elvart sorrend: futes_min < futes_max < hutes_min < hutes_max.
+                Jelenleg: {{ h_min }} / {{ h_max }} / {{ c_min }} / {{ c_max }}.
+                A szabalyozas nem futott le.
+          - stop: "Invalid parameter order"
+      - variables:
+          plan: >-
+            {% set ns = namespace(plan=[], demand=false) %}
+            {% for r in rooms %}
+              {% set t = states(r.temp) | float(none) %}
+              {% set s = states('input_number.szoba_eltolas_' ~ r.id) | float(0) %}
+              {% set s = [[s, -off_max] | max, off_max] | min %}
+              {% for c in r.circuits %}
+                {% set cur = is_state(c.entity, 'on') %}
+                {% set w = cur %}
+                {% if t is none %}
+                  {# unknown temperature: keep the current state #}
+                {% elif away %}
+                  {% if t < away_t %}{% set w = true %}
+                  {% elif t >= away_t + away_h %}{% set w = false %}{% endif %}
+                {% elif mode == 'futes' %}
+                  {% if t < h_min + s %}{% set w = true %}
+                  {% elif t >= h_max + s %}{% set w = false %}{% endif %}
+                {% elif mode == 'hutes' %}
+                  {% if t > c_max + s %}{% set w = true %}
+                  {% elif t <= c_min + s %}{% set w = false %}{% endif %}
+                {% else %}
+                  {% set w = false %}
+                {% endif %}
+                {% set ns.plan = ns.plan + [{'entity': c.entity, 'type': c.type, 'want': w}] %}
+                {% if c.type != 'wall' and w %}{% set ns.demand = true %}{% endif %}
+              {% endfor %}
+            {% endfor %}
+            {# fallback: nothing else open -> wall circuits must be open #}
+            {% set out = namespace(final=[]) %}
+            {% for p in ns.plan %}
+              {% set w = true if (p.type == 'wall' and not ns.demand) else p.want %}
+              {% set out.final = out.final + [{'entity': p.entity, 'type': p.type, 'want': w}] %}
+            {% endfor %}
+            {{ out.final }}
+      - variables:
+          demand: >-
+            {{ plan | selectattr('type', 'ne', 'wall') | selectattr('want') | list | length > 0 }}
+          exchanger_mode: >-
+            {% if away %}{{ 'futes' if demand else 'semleges' }}{% else %}{{ mode }}{% endif %}
+      # ---- apply: open first, close afterwards (never all valves closed) ----
+      - repeat:
+          for_each: "{{ plan | selectattr('want') | list }}"
+          sequence:
+            - if:
+                - condition: template
+                  value_template: "{{ not is_state(repeat.item.entity, 'on') }}"
+              then:
+                - action: homeassistant.turn_on
+                  target:
+                    entity_id: "{{ repeat.item.entity }}"
+                  continue_on_error: true
+      - repeat:
+          for_each: "{{ plan | rejectattr('want') | list }}"
+          sequence:
+            - if:
+                - condition: template
+                  value_template: "{{ is_state(repeat.item.entity, 'on') }}"
+              then:
+                - action: homeassistant.turn_off
+                  target:
+                    entity_id: "{{ repeat.item.entity }}"
+                  continue_on_error: true
+      - action: script.hocserelo_uzemmod_beallitas
+        data:
+          mode: "{{ exchanger_mode }}"
+          demand: "{{ demand }}"
+
+# -----------------------------------------------------------------------------
+# 4. Automations
+# -----------------------------------------------------------------------------
+automation:
+  - id: szabalyozas_uzemmod_valasztas
+    alias: "Szabalyozas - uzemmod valasztas (futes / semleges / hutes)"
+    mode: single
+    triggers:
+      - trigger: time_pattern
+        minutes: "0"
+      - trigger: homeassistant
+        event: start
+      - trigger: state
+        entity_id: input_boolean.tavolleti_uzem
+        to: "off"
+    conditions:
+      # vacancy mode overrides the automatic mode selection
+      - condition: state
+        entity_id: input_boolean.tavolleti_uzem
+        state: "off"
+    actions:
+      - variables:
+          mode: "{{ states('input_select.hazvezerlo_uzemmod') }}"
+          # positive: outdoor colder than indoor, negative: outdoor warmer
+          dt: "{{ states('sensor.belso_kulso_kulonbseg_24h') | float(none) }}"
+          enter: "{{ states('input_number.modvaltas_belepesi_kuszob') | float(4) }}"
+          exit_t: "{{ states('input_number.modvaltas_kilepesi_kuszob') | float(2) }}"
+          dwell_h: "{{ states('input_number.modvaltas_min_tartozkodas') | float(24) }}"
+          since_h: >-
+            {{ (now().timestamp()
+                - (state_attr('input_datetime.hazvezerlo_utolso_valtas', 'timestamp') | float(0))) / 3600 }}
+      - variables:
+          # Only transitions semleges<->futes and semleges<->hutes exist.
+          new_mode: >-
+            {% set r = mode %}
+            {% if dt is not none and since_h >= dwell_h %}
+              {% if mode == 'semleges' %}
+                {% set r = 'futes' if dt >= enter else ('hutes' if -dt >= enter else 'semleges') %}
+              {% elif mode == 'futes' %}
+                {% set r = 'semleges' if dt <= exit_t else 'futes' %}
+              {% elif mode == 'hutes' %}
+                {% set r = 'semleges' if -dt <= exit_t else 'hutes' %}
+              {% endif %}
+            {% endif %}
+            {{ r }}
+      - if:
+          - condition: template
+            value_template: "{{ new_mode != mode }}"
+        then:
+          - action: input_select.select_option
+            target:
+              entity_id: input_select.hazvezerlo_uzemmod
+            data:
+              option: "{{ new_mode }}"
+
+  - id: szabalyozas_uzemmod_valtas_naplo
+    alias: "Szabalyozas - uzemmod-valtas idopontjanak rogzitese"
+    mode: queued
+    triggers:
+      - trigger: state
+        entity_id: input_select.hazvezerlo_uzemmod
+        not_from: [unavailable, unknown]
+        not_to: [unavailable, unknown]
+    actions:
+      - action: input_datetime.set_datetime
+        target:
+          entity_id: input_datetime.hazvezerlo_utolso_valtas
+        data:
+          timestamp: "{{ now().timestamp() | int }}"
+
+  - id: szabalyozas_szobak_vezerlese
+    alias: "Szabalyozas - szobak vezerlese"
+    mode: queued
+    max: 3
+    triggers:
+      - trigger: time_pattern
+        minutes: "/5"
+      - trigger: homeassistant
+        event: start
+      - trigger: state
+        entity_id:
+          - input_select.hazvezerlo_uzemmod
+          - input_boolean.tavolleti_uzem
+          - input_number.futes_min
+          - input_number.futes_max
+          - input_number.hutes_min
+          - input_number.hutes_max
+          - input_number.tavolleti_homerseklet
+          - input_number.tavolleti_hiszterezis
+          - input_number.lakoi_eltolas_max
+          - input_number.szoba_eltolas_dolgozo
+          - input_number.szoba_eltolas_nappali
+          - input_number.szoba_eltolas_kis_gyerekszoba
+    actions:
+      - action: script.szabalyozas_futokorok
+
+  - id: szabalyozas_fagyvedelem_riasztas
+    alias: "Szabalyozas - fagyvedelem riasztas (tavolleti uzem)"
+    mode: single
+    triggers:
+      # coldest room is more than 2 degrees below the vacancy setpoint for 30 min
+      - trigger: template
+        value_template: >-
+          {{ states('sensor.legalacsonyabb_szoba_homerseklet') | float(99)
+             < states('input_number.tavolleti_homerseklet') | float(16) - 2 }}
+        for: "00:30:00"
+      # no temperature data at all for 30 min
+      - trigger: state
+        entity_id: sensor.legalacsonyabb_szoba_homerseklet
+        to: unavailable
+        for: "00:30:00"
+    conditions:
+      - condition: state
+        entity_id: input_boolean.tavolleti_uzem
+        state: "on"
+    actions:
+      - action: persistent_notification.create
+        data:
+          notification_id: szabalyozas_fagyvedelem
+          title: "Fagyvedelem: ellenorzes szukseges"
+          message: >-
+            Tavolleti uzem aktiv, de a legalacsonyabb szobahomerseklet:
+            {{ states('sensor.legalacsonyabb_szoba_homerseklet') }} °C
+            (cel: {{ states('input_number.tavolleti_homerseklet') }} °C).
